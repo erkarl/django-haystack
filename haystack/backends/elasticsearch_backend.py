@@ -125,31 +125,45 @@ class ElasticsearchSearchBackend(BaseSearchBackend):
             }
         }
 
-        current_properties = current_mapping['modelresult']['properties']
-        existing_properties = self.existing_mapping[self.index_name]['modelresult']['properties']
-        del existing_properties['django_id']
-        del existing_properties['django_ct']
-        del existing_properties['id']
-        mapping_needs_update = len(current_properties) != len(existing_properties)
-        if not mapping_needs_update:
-            for prop, values in current_properties.iteritems():
-                existing_values = existing_properties[prop]
-                if existing_values['type'] != values['type']:
-                    mapping_needs_update = True
-                    break
+        index_geopolygon = False
+        print 'BEFORE CHECK'
+        if not index_geopolygon:
+            if current_mapping != self.existing_mapping:
+                print 'current mapping is not self.existing mapping'
+                try:
+                    # Make sure the index is there first.
+                    self.conn.create_index(self.index_name, self.DEFAULT_SETTINGS)
+                    self.conn.put_mapping(self.index_name, 'modelresult', current_mapping)
+                    self.existing_mapping = current_mapping
+                except Exception:
+                    if not self.silently_fail:
+                        raise
 
-        if mapping_needs_update:
-            try:
-                # Make sure the index is there first.
-                self.conn.create_index(self.index_name, self.DEFAULT_SETTINGS)
-                self.conn.put_mapping(self.index_name, 'modelresult', current_mapping)
-                self.existing_mapping = current_mapping
-            except Exception:
-                """
-                if not self.silently_fail:
+        if index_geopolygon:
+            print 'INDEXING GEOPOLYGON'
+            current_properties = current_mapping['modelresult']['properties']
+            existing_properties = self.existing_mapping[self.index_name]['modelresult']['properties']
+            # existing_properties = {}
+            del existing_properties['django_id']
+            del existing_properties['django_ct']
+            del existing_properties['id']
+            mapping_needs_update = len(current_properties) != len(existing_properties)
+            # mapping_needs_update = False
+            if not mapping_needs_update:
+                for prop, values in current_properties.iteritems():
+                    existing_values = existing_properties[prop]
+                    if existing_values['type'] != values['type']:
+                        mapping_needs_update = True
+                        break
+
+            if mapping_needs_update:
+                try:
+                    # Make sure the index is there first.
+                    self.conn.create_index(self.index_name, self.DEFAULT_SETTINGS)
+                    self.conn.put_mapping(self.index_name, 'modelresult', current_mapping)
+                    self.existing_mapping = current_mapping
+                except Exception:
                     raise
-                """
-                raise
 
         self.setup_complete = True
 
