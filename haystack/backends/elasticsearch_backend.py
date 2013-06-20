@@ -125,15 +125,31 @@ class ElasticsearchSearchBackend(BaseSearchBackend):
             }
         }
 
-        if current_mapping != self.existing_mapping:
+        current_properties = current_mapping['modelresult']['properties']
+        existing_properties = self.existing_mapping[self.index_name]['modelresult']['properties']
+        del existing_properties['django_id']
+        del existing_properties['django_ct']
+        del existing_properties['id']
+        mapping_needs_update = len(current_properties) != len(existing_properties)
+        if not mapping_needs_update:
+            for prop, values in current_properties.iteritems():
+                existing_values = existing_properties[prop]
+                if existing_values['type'] != values['type']:
+                    mapping_needs_update = True
+                    break
+
+        if mapping_needs_update:
             try:
                 # Make sure the index is there first.
                 self.conn.create_index(self.index_name, self.DEFAULT_SETTINGS)
                 self.conn.put_mapping(self.index_name, 'modelresult', current_mapping)
                 self.existing_mapping = current_mapping
             except Exception:
+                """
                 if not self.silently_fail:
                     raise
+                """
+                raise
 
         self.setup_complete = True
 
@@ -235,7 +251,7 @@ class ElasticsearchSearchBackend(BaseSearchBackend):
                             fields='', highlight=False, facets=None,
                             date_facets=None, query_facets=None,
                             narrow_queries=None, spelling_query=None,
-                            within=None, dwithin=None, distance_point=None,
+                            within=None, dwithin=None, distance_point=None, polygon=None,
                             models=None, limit_to_registered_models=None,
                             result_class=None):
         index = haystack.connections[self.connection_alias].get_unified_index()
@@ -470,6 +486,29 @@ class ElasticsearchSearchBackend(BaseSearchBackend):
                 kwargs['query']['filtered']['filter'] = compound_filter
             else:
                 kwargs['query']['filtered']['filter'] = dwithin_filter
+
+        if polygon is not None:
+            points = map(lambda x: {"lat": x[1], "lon": x[0]},
+                         polygon['polygon'].coords[0])
+            polygon_filter = {
+                "geo_polygon": {
+                    polygon['field']: {
+                        "points": points
+                    }
+                },
+            }
+            kwargs['query'].setdefault('filtered', {})
+            kwargs['query']['filtered'].setdefault('filter', {})
+            if kwargs['query']['filtered']['filter']:
+                compound_filter = {
+                    "and": [
+                        kwargs['query']['filtered']['filter'],
+                        polygon_filter,
+                    ]
+                }
+                kwargs['query']['filtered']['filter'] = compound_filter
+            else:
+                kwargs['query']['filtered']['filter'] = polygon_filter
 
         # Remove the "filtered" key if we're not filtering. Otherwise,
         # Elasticsearch will blow up.
@@ -929,6 +968,9 @@ class ElasticsearchSearchQuery(BaseSearchQuery):
 
         if self.within:
             search_kwargs['within'] = self.within
+
+        if self.polygon:
+            search_kwargs['polygon'] = self.polygon
 
         if spelling_query:
             search_kwargs['spelling_query'] = spelling_query
